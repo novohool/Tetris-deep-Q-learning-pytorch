@@ -4,7 +4,8 @@
 import argparse
 import os
 import shutil
-from random import random, randint, sample
+import random as rd
+from random import random ,randint, sample
 
 import numpy as np
 import torch
@@ -25,9 +26,9 @@ def get_args():
     parser.add_argument("--batch_size", type=int, default=512, help="The number of images per batch")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--gamma", type=float, default=0.99)
-    parser.add_argument("--initial_epsilon", type=float, default=1)
-    parser.add_argument("--final_epsilon", type=float, default=1e-3)
-    parser.add_argument("--num_decay_epochs", type=float, default=2000)
+    parser.add_argument("--initial_epsilon", type=float, default=0.9)  # 高探索率
+    parser.add_argument("--final_epsilon", type=float, default=0.05)   # 低探索率
+    parser.add_argument("--num_decay_epochs", type=float, default=3000)
     parser.add_argument("--num_epochs", type=int, default=3000)
     parser.add_argument("--save_interval", type=int, default=1000)
     parser.add_argument("--replay_memory_size", type=int, default=30000,
@@ -50,6 +51,7 @@ def train(opt):
     writer = SummaryWriter(opt.log_path)
     env = Tetris(width=opt.width, height=opt.height, block_size=opt.block_size)
     model = DeepQNetwork()
+    agent = TetrisAgent(model, opt.replay_memory_size, opt.gamma,env)
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)
     criterion = nn.MSELoss()
 
@@ -81,8 +83,24 @@ def train(opt):
             index = torch.argmax(predictions).item()
 
         next_state = next_states[index, :]
-        action = next_actions[index]
-
+        while epoch < opt.num_epochs:
+            state = env.reset()
+            done = False
+            while epoch < opt.num_epochs:
+                state = env.reset()
+                done = False
+                while not done:
+                    action = agent.choose_action(state, epsilon)
+                    reward, done = env.step(action)  # 这里的 action 是一个 (x, num_rotations) 元组
+                    next_state = env.get_state_properties(env.get_current_board_state())  # 获取当前状态
+            
+                    # 存储转换后的状态、动作、奖励等信息
+                    agent.remember(state, action, reward, next_state, done)
+            
+                    # 准备下一轮迭代
+                    state = next_state   
+                
+                
         reward, done = env.step(action, render=True)
 
         if torch.cuda.is_available():
@@ -142,6 +160,35 @@ def train(opt):
             torch.save(model, "{}/tetris_{}".format(opt.saved_path, epoch))
 
     torch.save(model, "{}/tetris".format(opt.saved_path))
+
+class TetrisAgent:
+    def __init__(self, model, max_memory, discount,env):
+        self.model = model
+        self.memory = deque(maxlen=max_memory)
+        self.discount = discount
+        self.env = env 
+
+    def remember(self, state, action, reward, next_state, done):
+        self.memory.append((state, action, reward, next_state, done))
+
+    def choose_action(self, state, epsilon):
+        if rd.uniform(0, 1) < epsilon:
+            # 随机选择一个动作
+            x = rd.randint(0, self.env.width - 1)
+            num_rotations = rd.randint(0, 3)
+            return (x, num_rotations)
+        else:
+            # 使用模型预测最佳动作
+            state0 = state.clone().detach().to(torch.float)
+            prediction = self.model(state0)
+            # 假设模型预测的是一个包含所有可能动作的评分列表
+            # 您需要根据模型的具体输出格式来调整这部分代码
+            best_action_index = torch.argmax(prediction).item()
+            # 将索引转换为实际的动作
+            x = best_action_index // 4
+            num_rotations = best_action_index % 4
+            return (x, num_rotations)
+
 
 
 if __name__ == "__main__":
