@@ -135,8 +135,14 @@ class Tetris:
         board = [x[:] for x in self.board]
         for y in range(len(self.piece)):
             for x in range(len(self.piece[y])):
-                board[y + self.current_pos["y"]][x + self.current_pos["x"]] = self.piece[y][x]
+                if self.piece[y][x]:
+                    board_y = y + self.current_pos["y"]
+                    board_x = x + self.current_pos["x"]
+                    if board_y < 0 or board_y >= self.height or board_x < 0 or board_x >= self.width:
+                        continue
+                    board[board_y][board_x] = self.piece[y][x]
         return board
+
 
     def new_piece(self):
         if not len(self.bag):
@@ -154,8 +160,11 @@ class Tetris:
         future_y = pos["y"] + 1
         for y in range(len(piece)):
             for x in range(len(piece[y])):
-                if future_y + y > self.height - 1 or self.board[future_y + y][pos["x"] + x] and piece[y][x]:
-                    return True
+                if piece[y][x]:
+                    if future_y + y > self.height - 1 or pos["x"] + x > self.width - 1 or pos["x"] + x < 0:
+                        return True
+                    if self.board[future_y + y][pos["x"] + x]:
+                        return True
         return False
 
     def truncate(self, piece, pos):
@@ -163,10 +172,15 @@ class Tetris:
         last_collision_row = -1
         for y in range(len(piece)):
             for x in range(len(piece[y])):
-                if self.board[pos["y"] + y][pos["x"] + x] and piece[y][x]:
-                    if y > last_collision_row:
-                        last_collision_row = y
-
+                if piece[y][x]:
+                    board_y = pos["y"] + y
+                    board_x = pos["x"] + x
+                    if board_y < 0 or board_y >= self.height or board_x < 0 or board_x >= self.width:
+                        continue
+                    if self.board[board_y][board_x]:
+                        if y > last_collision_row:
+                            last_collision_row = y
+    
         if pos["y"] - (len(piece) - last_collision_row) < 0 and last_collision_row > -1:
             while last_collision_row >= 0 and len(piece) > 1:
                 gameover = True
@@ -174,17 +188,28 @@ class Tetris:
                 del piece[0]
                 for y in range(len(piece)):
                     for x in range(len(piece[y])):
-                        if self.board[pos["y"] + y][pos["x"] + x] and piece[y][x] and y > last_collision_row:
+                        board_y = pos["y"] + y
+                        board_x = pos["x"] + x
+                        if board_y < 0 or board_y >= self.height or board_x < 0 or board_x >= self.width:
+                            continue
+                        if self.board[board_y][board_x] and piece[y][x] and y > last_collision_row:
                             last_collision_row = y
         return gameover
+
 
     def store(self, piece, pos):
         board = [x[:] for x in self.board]
         for y in range(len(piece)):
             for x in range(len(piece[y])):
-                if piece[y][x] and not board[y + pos["y"]][x + pos["x"]]:
-                    board[y + pos["y"]][x + pos["x"]] = piece[y][x]
+                if piece[y][x]:
+                    board_y = y + pos["y"]
+                    board_x = x + pos["x"]
+                    if board_y < 0 or board_y >= self.height or board_x < 0 or board_x >= self.width:
+                        continue
+                    if not board[board_y][board_x]:
+                        board[board_y][board_x] = piece[y][x]
         return board
+
 
     def check_cleared_rows(self, board):
         to_delete = []
@@ -204,20 +229,25 @@ class Tetris:
     def step(self, action, render=True, video=None):
         x, num_rotations = action
         self.current_pos = {"x": x, "y": 0}
+    
+        # 在下落过程中尝试旋转操作
         for _ in range(num_rotations):
-            self.piece = self.rotate(self.piece)
-
+            rotated_piece = self.rotate(self.piece)
+            if not self.check_collision(rotated_piece, self.current_pos):
+                # 如果旋转后没有碰撞，则更新方块
+                self.piece = rotated_piece
+    
         while not self.check_collision(self.piece, self.current_pos):
             self.current_pos["y"] += 1
             if render:
                 self.render(video)
-
+    
         overflow = self.truncate(self.piece, self.current_pos)
         if overflow:
             self.gameover = True
-
+    
         self.board = self.store(self.piece, self.current_pos)
-
+    
         lines_cleared, self.board = self.check_cleared_rows(self.board)
         score = 1 + (lines_cleared ** 2) * self.width
         self.score += score
@@ -227,8 +257,9 @@ class Tetris:
             self.new_piece()
         if self.gameover:
             self.score -= 2
-
+    
         return score, self.gameover
+
 
     def render(self, video=None):
         if not self.gameover:
